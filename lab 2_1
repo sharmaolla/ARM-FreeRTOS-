@@ -1,0 +1,78 @@
+#include <iostream>
+#include <sstream>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+#include "hardware/gpio.h"
+#include "PicoOsUart.h"
+#include "ssd1306.h"
+#include "pico/stdlib.h"
+#include "queue.h"
+#include "pico/stdio.h"
+#include <cstdio>
+#include "hardware/timer.h"
+#include "pico/time.h"
+
+#define LED 22
+
+extern "C" {
+uint32_t read_runtime_ctr(void) {
+    return timer_hw->timerawl;
+}
+}
+void blink_led(){
+    gpio_put(LED, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_put(LED, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
+// TASK 1 -------------------------------------------------------
+
+void ReadSerial (void *pvParameters){
+    SemaphoreHandle_t Semaphore = (SemaphoreHandle_t ) pvParameters;
+
+    while(1){
+        int received = getchar_timeout_us(0);
+        static absolute_time_t  last_time = nil_time;
+
+        if (received != PICO_ERROR_TIMEOUT){
+            printf("\nECHO: %c\n", received);
+            last_time = get_absolute_time();
+        }
+        if ( !is_nil_time(last_time) && absolute_time_diff_us(last_time, get_absolute_time()) >=200000){
+            xSemaphoreGive(Semaphore);
+            last_time = nil_time;
+        }
+
+    }
+}
+
+//TASK 1---------------------------------------------------------
+void BlinkLED(void *pvParameters){
+    SemaphoreHandle_t Semaphore = (SemaphoreHandle_t) pvParameters;
+    while(1){
+        if(xSemaphoreTake(Semaphore, portMAX_DELAY)== pdTRUE){
+            blink_led();
+        }
+
+    }
+}
+
+int main (){
+    gpio_init(LED);
+    gpio_set_dir(LED, GPIO_OUT);
+    gpio_put(LED, 0);
+    stdio_init_all();
+
+    SemaphoreHandle_t Semaphore;
+    Semaphore = xSemaphoreCreateBinary();
+
+    xTaskCreate(ReadSerial, "Read Serial", 512, Semaphore, 1, nullptr);
+    xTaskCreate(BlinkLED, "Blink LED", 512, Semaphore, 2, nullptr);
+
+    vTaskStartScheduler();
+
+    while(true){}
+
+}
