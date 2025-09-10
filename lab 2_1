@@ -34,15 +34,13 @@ void ReadSerial (void *pvParameters){
 
     while(1){
         int received = getchar_timeout_us(0);
-        static absolute_time_t  last_time = nil_time;
 
         if (received != PICO_ERROR_TIMEOUT){
-            printf("\nECHO: %c\n", received);
-            last_time = get_absolute_time();
-        }
-        if ( !is_nil_time(last_time) && absolute_time_diff_us(last_time, get_absolute_time()) >=200000){
+            printf("..................ECHO: %c\n", received);
             xSemaphoreGive(Semaphore);
-            last_time = nil_time;
+        }
+        else{
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
 
     }
