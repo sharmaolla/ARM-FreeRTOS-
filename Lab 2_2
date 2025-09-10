@@ -23,12 +23,15 @@ uint32_t read_runtime_ctr(void) {
     return timer_hw->timerawl;
 }
 }
+
 QueueHandle_t queue;
+QueueHandle_t q_between_tasks;
 
 typedef struct{
     uint PIN;
     bool status;
     int frequency;
+
 }LED_param;
 
 void Rot_ISR(uint gpio, uint32_t events){
@@ -60,14 +63,19 @@ void Rot_ISR(uint gpio, uint32_t events){
 static void ReadQ(void *pvParameters){
     auto *led = static_cast<LED_param *>(pvParameters);
     int received;
+    int send;
     while(1){
         if(xQueueReceive(queue, &received,portMAX_DELAY)){
             if(received == 0){
                 led->status = ! led->status;
                 printf("Button was pressed.\n");
+                send = led->status;
+                //xQueueSend(q_between_tasks, &status, 0);
+
             }
             else if(received == 1){
                 led->frequency++;
+
             }
             else if(received == -1){
                led->frequency--;
@@ -75,21 +83,66 @@ static void ReadQ(void *pvParameters){
             if(led->frequency > 200){
                 led->frequency = 200;
             }
-            if(led->frequency < 0){
-                led->frequency = 0;
+            if(led->frequency < 2){
+                led->frequency = 2;
             }
             printf("LED is blinking at %d Hz\n", led->frequency);
+            send = led->frequency;
+            xQueueSend(q_between_tasks, &send, 0);
+        }
+        else{
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
 }
+
+
 
 // TASK 2 -------------------------------------------------
 
 static void HandleLED(void *pvParameters){
     auto *led = static_cast<LED_param *>(pvParameters);
+    int msg;
+    int HalfPeriod = 500/ led->frequency;
+
+        while(1){
+            if (xQueueReceive(q_between_tasks, &msg, 0) == pdTRUE){
+                if(msg >= 2){
+                    led->frequency = msg;
+                    HalfPeriod = 500/ msg;
+
+                }
+                else if(msg == 1){
+                    led->status = true;
+                }
+                else if(msg == 0){
+                    led->status = false;
+                }
+            }
+            else{
+
+                if(led->status == false){
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
+                else{
+                    //printf("LED: %d\n", led->status);
+                    gpio_put(led->PIN, true);
+                    vTaskDelay(pdMS_TO_TICKS(HalfPeriod));
+                    gpio_put(led->PIN, false);
+                    vTaskDelay(pdMS_TO_TICKS(HalfPeriod));
+                }
+
+            }
+        }
+}
+
+static void HandleLED_old(void *pvParameters){
+    auto *led = static_cast<LED_param *>(pvParameters);
+
 
     while(1){
-        if(led->status && led->frequency != 0 ){
+
+        if(led->status && led->frequency != 0 ){ // queue
             int HalfPeriod = 500/led->frequency;
             gpio_put(led->PIN, true);
             vTaskDelay(pdMS_TO_TICKS(HalfPeriod));
@@ -98,7 +151,7 @@ static void HandleLED(void *pvParameters){
         }
         else{
             //led->status = false;
-            gpio_put(led->PIN, false);
+            gpio_put(led->PIN, false); //
         }
     }
 }
@@ -108,6 +161,7 @@ static void HandleLED(void *pvParameters){
 int main(){
 
     queue = xQueueCreate(10, sizeof (int));
+    q_between_tasks = xQueueCreate(10, sizeof(int));
 
     gpio_init(RotSW);
     gpio_set_dir(RotSW, GPIO_IN);
@@ -120,7 +174,7 @@ int main(){
     gpio_set_dir(Rot_B, GPIO_IN);
 
 
-    LED_param led = {21,false, 0};
+    LED_param led = {21,true, 2};
     gpio_init(led.PIN);
     gpio_set_dir(led.PIN, GPIO_OUT);
     gpio_put(led.PIN, false);
